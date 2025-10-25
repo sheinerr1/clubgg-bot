@@ -1633,15 +1633,24 @@ def build_report_clubgg(
                     f"{prefix}{disp}: {total}/{cap} ({bots}) план: {p}{live_str}"
                 )
             elif bots < p:
-                prefix = "\u26a0️ " if use_icons else ""
-                table_lines.append(
-                    f"{prefix}{disp}: {total}/{cap} ({bots}) план: {p}{live_str}"
-                )
-                diff = p - bots
-                stat_prefix = "\u26a0️ " if use_icons else ""
-                issues.append(
-                    f"{stat_prefix}{disp}: -{diff}{format_live_stat(live, use_icons)}"
-                )
+                # Если стол полный, есть живые игроки и ботов меньше на 1 - это норма
+                # (бот вышел, чтобы освободить место живому игроку)
+                if total == cap and live > 0 and bots == p - 1:
+                    prefix = "\u2705 " if use_icons else ""
+                    table_lines.append(
+                        f"{prefix}{disp}: {total}/{cap} ({bots}) план: {p}{live_str}"
+                    )
+                else:
+                    # Остальные случаи - реальная ошибка
+                    prefix = "\u26a0️ " if use_icons else ""
+                    table_lines.append(
+                        f"{prefix}{disp}: {total}/{cap} ({bots}) план: {p}{live_str}"
+                    )
+                    diff = p - bots
+                    stat_prefix = "\u26a0️ " if use_icons else ""
+                    issues.append(
+                        f"{stat_prefix}{disp}: -{diff}{format_live_stat(live, use_icons)}"
+                    )
             else:
                 # bots > p - лишние боты
                 prefix = "\U0001f53c " if use_icons else ""
@@ -1820,15 +1829,24 @@ def build_report_diamond(
                         f"{prefix}{display_name}: {total}/{cap} ({bots}) план: {p}{live_str}"
                     )
                 elif bots < p:
-                    prefix = "\u26a0️ " if use_icons else ""
-                    table_lines.append(
-                        f"{prefix}{display_name}: {total}/{cap} ({bots}) план: {p}{live_str}"
-                    )
-                    diff = p - bots
-                    stat_prefix = "\u26a0️ " if use_icons else ""
-                    issues.append(
-                        f"{stat_prefix}{stats_name}: -{diff}{format_live_stat(live, use_icons)}"
-                    )
+                    # Если стол полный, есть живые игроки и ботов меньше на 1 - это норма
+                    # (бот вышел, чтобы освободить место живому игроку)
+                    if total == cap and live > 0 and bots == p - 1:
+                        prefix = "\u2705 " if use_icons else ""
+                        table_lines.append(
+                            f"{prefix}{display_name}: {total}/{cap} ({bots}) план: {p}{live_str}"
+                        )
+                    else:
+                        # Остальные случаи - реальная ошибка
+                        prefix = "\u26a0️ " if use_icons else ""
+                        table_lines.append(
+                            f"{prefix}{display_name}: {total}/{cap} ({bots}) план: {p}{live_str}"
+                        )
+                        diff = p - bots
+                        stat_prefix = "\u26a0️ " if use_icons else ""
+                        issues.append(
+                            f"{stat_prefix}{stats_name}: -{diff}{format_live_stat(live, use_icons)}"
+                        )
                 else:
                     # bots > p - лишние боты
                     prefix = "\U0001f53c " if use_icons else ""
