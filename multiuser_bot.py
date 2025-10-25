@@ -1633,9 +1633,9 @@ def build_report_clubgg(
                     f"{prefix}{disp}: {total}/{cap} ({bots}) план: {p}{live_str}"
                 )
             elif bots < p:
-                # Если стол полный, есть живые игроки и ботов меньше на 1 - это норма
-                # (бот вышел, чтобы освободить место живому игроку)
-                if total == cap and live > 0 and bots == p - 1:
+                # Если стол полный, есть живые игроки и ботов = план - живые - это норма
+                # (боты вышли, чтобы освободить места живым игрокам)
+                if total == cap and live > 0 and bots == p - live:
                     prefix = "\u2705 " if use_icons else ""
                     table_lines.append(
                         f"{prefix}{disp}: {total}/{cap} ({bots}) план: {p}{live_str}"
@@ -1829,9 +1829,9 @@ def build_report_diamond(
                         f"{prefix}{display_name}: {total}/{cap} ({bots}) план: {p}{live_str}"
                     )
                 elif bots < p:
-                    # Если стол полный, есть живые игроки и ботов меньше на 1 - это норма
-                    # (бот вышел, чтобы освободить место живому игроку)
-                    if total == cap and live > 0 and bots == p - 1:
+                    # Если стол полный, есть живые игроки и ботов = план - живые - это норма
+                    # (боты вышли, чтобы освободить места живым игрокам)
+                    if total == cap and live > 0 and bots == p - live:
                         prefix = "\u2705 " if use_icons else ""
                         table_lines.append(
                             f"{prefix}{display_name}: {total}/{cap} ({bots}) план: {p}{live_str}"
