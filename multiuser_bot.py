@@ -2702,8 +2702,6 @@ async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             )]
                         ])
                     await update.message.reply_text(chunk, reply_markup=keyboard)
-                # Обновляем время последней проверки чтобы избежать дублирования
-                db.set_source_last_checked(source['id'])
             except Exception as e:
                 await update.message.reply_text(
                     f"\u274c Ошибка при проверке {source['name']}: {e}"
@@ -2726,8 +2724,6 @@ async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chunks = list(chunk_text(report))
                 for chunk in chunks:
                     await update.message.reply_text(chunk)
-                # Обновляем время последней проверки чтобы избежать дублирования
-                db.set_source_last_checked(source['id'])
             except Exception as e:
                 await update.message.reply_text(
                     f"\u274c Ошибка при проверке {source['name']}: {e}"
@@ -2738,8 +2734,6 @@ async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for source_name, report_text, site_type, source_id in reports:
             for chunk in chunk_text(report_text):
                 await update.message.reply_text(chunk)
-            # Обновляем время последней проверки чтобы избежать дублирования
-            db.set_source_last_checked(source_id)
 
 async def cmd_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Refresh browsers"""
@@ -3766,15 +3760,14 @@ def build_app():
 
         error = context.error
 
-        # Логируем полную информацию об ошибке
+        # Логируем сетевые ошибки молча (часто случаются, не критичны)
+        if isinstance(error, (NetworkError, TimedOut)):
+            # Сетевая ошибка - бот переподключится автоматически
+            return
+
+        # Для остальных ошибок выводим предупреждение
         print(f"[WARNING] Exception while handling an update:")
         print(f"Error: {error}")
-
-        # Логируем сетевые ошибки, но не падаем
-        if isinstance(error, (NetworkError, TimedOut)):
-            print(f"[NETWORK ERROR] Network error occurred: {error}")
-            print("Bot will continue running and retry on next update...")
-            return
 
         # Для остальных ошибок выводим полный traceback
         print("".join(traceback.format_exception(None, error, error.__traceback__)))
