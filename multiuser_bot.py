@@ -770,11 +770,11 @@ def _find_schedule_blocks(df: pd.DataFrame, hour_msk: int):
     for idx, (row, col_map) in enumerate(header_rows):
         jmax = max(col_map.keys())
 
-        # Логика для label: после 23:00 идут столбцы +1, +2=Союз, +3=Клуб, +4=Суперсоюз
-        # Игнорируем: "ok", "nan", "id", "0", пустые значения (для ВСЕХ столбцов)
-        # Приоритет: Союз > Клуб > Суперсоюз > Блок (старый формат)
+        # Логика для label: после 23:00 идут столбцы +1=Блок, +2=Союз, +3=Клуб, +4=Суперсоюз
+        # Игнорируем: "ok", "nan", "none", "id", "0", пустые значения (для ВСЕХ столбцов)
+        # Порядок проверки: слева направо (первое непустое значение)
         label = ""
-        ignore_values = {"ok", "nan", "id", "0", ""}
+        ignore_values = {"ok", "nan", "none", "id", "0", ""}
 
         col_1 = jmax + 1  # Столбец +1 (Блок в старом формате или "id" в новом)
         col_2 = jmax + 2  # Столбец +2 (Союз)
@@ -807,15 +807,15 @@ def _find_schedule_blocks(df: pd.DataFrame, hour_msk: int):
             if v.lower() not in ignore_values:
                 val_4 = v
 
-        # Формируем label по приоритету: Союз > Клуб > Суперсоюз > Блок
-        if val_2:
+        # Формируем label: берем первое непустое значение слева направо
+        if val_1:
+            label = f"Блок: {val_1}"
+        elif val_2:
             label = f"Союз: {val_2}"
         elif val_3:
             label = f"Клуб: {val_3}"
         elif val_4:
             label = f"Суперсоюз: {val_4}"
-        elif val_1:
-            label = f"Блок: {val_1}"
 
         h = hour_msk % 24
         same = [c for c, hh in col_map.items() if hh == h]
