@@ -749,11 +749,9 @@ def _hour_cols_on_row(df: pd.DataFrame, row: int) -> Dict[int, int]:
             # Если между последним найденным часом и текущим есть разрыв > 2 столбцов,
             # считаем что это не час, а обычное число (например, "0" в столбце после "id", "571")
             if last_col_with_hour >= 0 and j - last_col_with_hour > 2:
-                print(f"[DEBUG HOURS] col {j}: '{s}' SKIPPED (gap from {last_col_with_hour} > 2)")
                 break  # Прекращаем поиск часов
             col_map[j] = hour
             last_col_with_hour = j
-            print(f"[DEBUG HOURS] col {j}: '{s}' → hour {hour}")
     return col_map
 
 def _find_schedule_blocks(df: pd.DataFrame, hour_msk: int):
@@ -792,11 +790,6 @@ def _find_schedule_blocks(df: pd.DataFrame, hour_msk: int):
         col_3 = jmax + 3  # Столбец +3 (Клуб)
         col_4 = jmax + 4  # Столбец +4 (Суперсоюз)
 
-        print(f"[DEBUG] Row #{row}: jmax={jmax}, df.shape={df.shape}, need cols: {col_1},{col_2},{col_3},{col_4}")
-        # Показываем содержимое всей строки Time MSK
-        row_data = [str(df.iloc[row, i]) if i < df.shape[1] else "NONE" for i in range(max(jmax + 5, df.shape[1]))]
-        print(f"[DEBUG] Row #{row} data (cols {jmax-2} to {jmax+4}): {row_data[max(0, jmax-2):jmax+5]}")
-
         # Читаем значения из столбцов
         val_1 = ""
         val_2 = ""  # Союз
@@ -806,35 +799,31 @@ def _find_schedule_blocks(df: pd.DataFrame, hour_msk: int):
         # Безопасное чтение столбцов (Google Sheets API может не возвращать пустые ячейки в конце)
         try:
             v = str(df.iloc[row, col_1]).strip() if col_1 < df.shape[1] else ""
-            print(f"[DEBUG] col_1 (#{col_1}): '{v}' | lower: '{v.lower()}' | ignored: {v.lower() in ignore_values} | exists: {col_1 < df.shape[1]}")
             if v and v.lower() not in ignore_values:
                 val_1 = v
         except (IndexError, KeyError):
-            print(f"[DEBUG] col_1 (#{col_1}): NOT EXISTS")
+            pass
 
         try:
             v = str(df.iloc[row, col_2]).strip() if col_2 < df.shape[1] else ""
-            print(f"[DEBUG] col_2 (#{col_2}): '{v}' | lower: '{v.lower()}' | ignored: {v.lower() in ignore_values} | exists: {col_2 < df.shape[1]}")
             if v and v.lower() not in ignore_values:
                 val_2 = v
         except (IndexError, KeyError):
-            print(f"[DEBUG] col_2 (#{col_2}): NOT EXISTS")
+            pass
 
         try:
             v = str(df.iloc[row, col_3]).strip() if col_3 < df.shape[1] else ""
-            print(f"[DEBUG] col_3 (#{col_3}): '{v}' | lower: '{v.lower()}' | ignored: {v.lower() in ignore_values} | exists: {col_3 < df.shape[1]}")
             if v and v.lower() not in ignore_values:
                 val_3 = v
         except (IndexError, KeyError):
-            print(f"[DEBUG] col_3 (#{col_3}): NOT EXISTS")
+            pass
 
         try:
             v = str(df.iloc[row, col_4]).strip() if col_4 < df.shape[1] else ""
-            print(f"[DEBUG] col_4 (#{col_4}): '{v}' | lower: '{v.lower()}' | ignored: {v.lower() in ignore_values} | exists: {col_4 < df.shape[1]}")
             if v and v.lower() not in ignore_values:
                 val_4 = v
         except (IndexError, KeyError):
-            print(f"[DEBUG] col_4 (#{col_4}): NOT EXISTS")
+            pass
 
         # Формируем label: берем первое непустое значение слева направо
         if val_1:
@@ -845,8 +834,6 @@ def _find_schedule_blocks(df: pd.DataFrame, hour_msk: int):
             label = f"Клуб: {val_3}"
         elif val_4:
             label = f"Суперсоюз: {val_4}"
-
-        print(f"[DEBUG] Final label: '{label}' (val_1='{val_1}', val_2='{val_2}', val_3='{val_3}', val_4='{val_4}')")
 
         h = hour_msk % 24
         same = [c for c, hh in col_map.items() if hh == h]
@@ -2266,30 +2253,32 @@ async def cmd_tutorial(update: Update, context: ContextTypes.DEFAULT_TYPE):
 1️⃣ <b>Google Sheets - базовая структура</b>
    Создайте таблицу с расписанием ботов:
    - Первая колонка: название столов/лимиты
+   - Вторая колонка: размер стола (Size)
    - Колонки времени: 00:00, 01:00... 23:00
    - В ячейках: количество ботов на этот час
 
    Пример базовой таблицы:
-   | Стол      | 00:00 | 01:00 | 02:00 | ... | 23:00 |
-   |-----------|-------|-------|-------|-----|-------|
-   | NLH 100   | 5     | 3     | 2     | ... | 0     |
-   | PLO 50    | 2     | 2     | 2     | ... | 1     |
+   | Стол      | Size | 00:00 | 01:00 | 02:00 | ... | 23:00 |
+   |-----------|------|-------|-------|-------|-----|-------|
+   | NLH 100   | 6    | 5     | 3     | 2     | ... | 0     |
+   | PLO 50    | 9    | 2     | 2     | 2     | ... | 1     |
 
 2️⃣ <b>Дополнительные столбцы (необязательно)</b>
    После столбца 23:00 можно добавить идентификаторы:
 
-   | ... | 23:00 | id | Союз | Клуб | Суперсоюз |
-   |-----|-------|----|------|------|-----------|
-   | ... | 0     | id | 571  | 0    |           |
+   | ... | 23:00 | id | Блок  | Союз | Клуб | Суперсоюз |
+   |-----|-------|----|-------|------|------|-----------|
+   | ... | 0     | id | 23476 | 571  | 0    |           |
 
    - "id" - служебное слово (игнорируется)
-   - Союз - ID союза (приоритет 1)
-   - Клуб - ID клуба (приоритет 2)
-   - Суперсоюз - ID суперсоюза (приоритет 3)
+   - Блок - ID блока (приоритет 1)
+   - Союз - ID союза (приоритет 2)
+   - Клуб - ID клуба (приоритет 3)
+   - Суперсоюз - ID суперсоюза (приоритет 4)
    - Пустые или "0" значения игнорируются
 
    Бот автоматически определит тип и покажет в отчете:
-   "Союз: 571" или "Клуб: 26789"
+   "Блок: 23476", "Союз: 571" или "Клуб: 26789"
 
 3️⃣ <b>Получите ссылку на таблицу</b>
    Сделайте таблицу доступной по ссылке
