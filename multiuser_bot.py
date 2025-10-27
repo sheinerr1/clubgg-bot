@@ -244,7 +244,8 @@ def read_google_sheet(spreadsheet_id: str, range_name: str = 'A:Z') -> pd.DataFr
             return pd.DataFrame()
 
         # Конвертируем в DataFrame без заголовков (как в CSV варианте)
-        df = pd.DataFrame(values)
+        # Используем dtype=str чтобы сохранить исходные значения (например "23476 23477")
+        df = pd.DataFrame(values).astype(str)
         return df
 
     except HttpError as error:
@@ -376,7 +377,7 @@ def read_sheet_smart(sheet_url: str) -> pd.DataFrame:
             print(f"⚠️ Не удалось извлечь ID таблицы из URL: {sheet_url}")
 
     print(f"📄 Чтение таблицы через CSV export (публичная таблица)")
-    return pd.read_csv(sheet_url, header=None)
+    return pd.read_csv(sheet_url, header=None, dtype=str)
 
 # ====================== Database ======================
 
