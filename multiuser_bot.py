@@ -744,6 +744,7 @@ def _hour_cols_on_row(df: pd.DataFrame, row: int) -> Dict[int, int]:
         m = HH_RE.match(s)
         if m:
             col_map[j] = int(m.group(1)) % 24
+            print(f"[DEBUG HOURS] col {j}: '{s}' → hour {col_map[j]}")
     return col_map
 
 def _find_schedule_blocks(df: pd.DataFrame, hour_msk: int):
@@ -783,6 +784,9 @@ def _find_schedule_blocks(df: pd.DataFrame, hour_msk: int):
         col_4 = jmax + 4  # Столбец +4 (Суперсоюз)
 
         print(f"[DEBUG] Row #{row}: jmax={jmax}, df.shape={df.shape}, need cols: {col_1},{col_2},{col_3},{col_4}")
+        # Показываем содержимое всей строки Time MSK
+        row_data = [str(df.iloc[row, i]) if i < df.shape[1] else "NONE" for i in range(max(jmax + 5, df.shape[1]))]
+        print(f"[DEBUG] Row #{row} data (cols {jmax-2} to {jmax+4}): {row_data[max(0, jmax-2):jmax+5]}")
 
         # Читаем значения из столбцов
         val_1 = ""
