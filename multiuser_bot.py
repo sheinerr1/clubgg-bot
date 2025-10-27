@@ -3598,6 +3598,9 @@ async def auto_check_user(context: ContextTypes.DEFAULT_TYPE):
             if not should_check:
                 continue
 
+            # Фиксируем время начала проверки СРАЗУ, чтобы избежать смещения интервала
+            db.set_source_last_checked(source_id)
+
             # Определяем куда отправлять этот источник
             if source.get('group_id'):
                 # Источник привязан к группе
@@ -3623,8 +3626,6 @@ async def auto_check_user(context: ContextTypes.DEFAULT_TYPE):
                     except Exception as e:
                         print(f"Ошибка отправки для источника {source['name']}: {e}")
 
-                # Обновляем время последней проверки
-                db.set_source_last_checked(source_id)
                 print(f"   [OK] {source['name']} checked and sent")
 
             except Exception as e:
