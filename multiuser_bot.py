@@ -739,12 +739,21 @@ TIME_RX = re.compile(
 
 def _hour_cols_on_row(df: pd.DataFrame, row: int) -> Dict[int, int]:
     col_map: Dict[int, int] = {}
+    last_col_with_hour = -1
+
     for j in range(1, df.shape[1]):
         s = str(df.iloc[row, j]).strip()
         m = HH_RE.match(s)
         if m:
-            col_map[j] = int(m.group(1)) % 24
-            print(f"[DEBUG HOURS] col {j}: '{s}' → hour {col_map[j]}")
+            hour = int(m.group(1)) % 24
+            # Если между последним найденным часом и текущим есть разрыв > 2 столбцов,
+            # считаем что это не час, а обычное число (например, "0" в столбце после "id", "571")
+            if last_col_with_hour >= 0 and j - last_col_with_hour > 2:
+                print(f"[DEBUG HOURS] col {j}: '{s}' SKIPPED (gap from {last_col_with_hour} > 2)")
+                break  # Прекращаем поиск часов
+            col_map[j] = hour
+            last_col_with_hour = j
+            print(f"[DEBUG HOURS] col {j}: '{s}' → hour {hour}")
     return col_map
 
 def _find_schedule_blocks(df: pd.DataFrame, hour_msk: int):
