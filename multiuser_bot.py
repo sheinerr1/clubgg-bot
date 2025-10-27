@@ -769,12 +769,53 @@ def _find_schedule_blocks(df: pd.DataFrame, hour_msk: int):
     blocks = []
     for idx, (row, col_map) in enumerate(header_rows):
         jmax = max(col_map.keys())
+
+        # Логика для label: после 23:00 идут столбцы +1, +2=Союз, +3=Клуб, +4=Суперсоюз
+        # Игнорируем: "ok", "nan", "id", "0", пустые значения (для ВСЕХ столбцов)
+        # Приоритет: Союз > Клуб > Суперсоюз > Блок (старый формат)
         label = ""
-        for k in range(jmax + 1, df.shape[1]):
-            v = str(df.iloc[row, k]).strip()
-            if v and v.lower() not in {"ok", "nan"}:
-                label = v
-                break
+        ignore_values = {"ok", "nan", "id", "0", ""}
+
+        col_1 = jmax + 1  # Столбец +1 (Блок в старом формате или "id" в новом)
+        col_2 = jmax + 2  # Столбец +2 (Союз)
+        col_3 = jmax + 3  # Столбец +3 (Клуб)
+        col_4 = jmax + 4  # Столбец +4 (Суперсоюз)
+
+        # Читаем значения из столбцов
+        val_1 = ""
+        val_2 = ""  # Союз
+        val_3 = ""  # Клуб
+        val_4 = ""  # Суперсоюз
+
+        if col_1 < df.shape[1]:
+            v = str(df.iloc[row, col_1]).strip()
+            if v.lower() not in ignore_values:
+                val_1 = v
+
+        if col_2 < df.shape[1]:
+            v = str(df.iloc[row, col_2]).strip()
+            if v.lower() not in ignore_values:
+                val_2 = v
+
+        if col_3 < df.shape[1]:
+            v = str(df.iloc[row, col_3]).strip()
+            if v.lower() not in ignore_values:
+                val_3 = v
+
+        if col_4 < df.shape[1]:
+            v = str(df.iloc[row, col_4]).strip()
+            if v.lower() not in ignore_values:
+                val_4 = v
+
+        # Формируем label по приоритету: Союз > Клуб > Суперсоюз > Блок
+        if val_2:
+            label = f"Союз: {val_2}"
+        elif val_3:
+            label = f"Клуб: {val_3}"
+        elif val_4:
+            label = f"Суперсоюз: {val_4}"
+        elif val_1:
+            label = f"Блок: {val_1}"
 
         h = hour_msk % 24
         same = [c for c, hh in col_map.items() if hh == h]
@@ -1547,7 +1588,7 @@ def build_report_clubgg(
     for rows, hour_print, label in blocks:
         header = f"{source_name} ({now_text} MSK)\nUID: {uid}"
         if label:
-            header += f"\nБлок: {label}"
+            header += f"\n{label}"
         lines = [header, ""]
         total_plan = 0
         total_actual_bots = 0
@@ -1740,7 +1781,7 @@ def build_report_diamond(
     for rows, hour_print, label in blocks:
         header = f"{source_name} ({now_text} MSK)\nUID: {uid}"
         if label:
-            header += f"\nБлок: {label}"
+            header += f"\n{label}"
         lines = [header, ""]
         total_plan = 0
         total_fact_bots = 0
