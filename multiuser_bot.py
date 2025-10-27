@@ -790,21 +790,25 @@ def _find_schedule_blocks(df: pd.DataFrame, hour_msk: int):
 
         if col_1 < df.shape[1]:
             v = str(df.iloc[row, col_1]).strip()
+            print(f"[DEBUG] col_1 (#{col_1}): '{v}' | lower: '{v.lower()}' | ignored: {v.lower() in ignore_values}")
             if v.lower() not in ignore_values:
                 val_1 = v
 
         if col_2 < df.shape[1]:
             v = str(df.iloc[row, col_2]).strip()
+            print(f"[DEBUG] col_2 (#{col_2}): '{v}' | lower: '{v.lower()}' | ignored: {v.lower() in ignore_values}")
             if v.lower() not in ignore_values:
                 val_2 = v
 
         if col_3 < df.shape[1]:
             v = str(df.iloc[row, col_3]).strip()
+            print(f"[DEBUG] col_3 (#{col_3}): '{v}' | lower: '{v.lower()}' | ignored: {v.lower() in ignore_values}")
             if v.lower() not in ignore_values:
                 val_3 = v
 
         if col_4 < df.shape[1]:
             v = str(df.iloc[row, col_4]).strip()
+            print(f"[DEBUG] col_4 (#{col_4}): '{v}' | lower: '{v.lower()}' | ignored: {v.lower() in ignore_values}")
             if v.lower() not in ignore_values:
                 val_4 = v
 
@@ -817,6 +821,8 @@ def _find_schedule_blocks(df: pd.DataFrame, hour_msk: int):
             label = f"Клуб: {val_3}"
         elif val_4:
             label = f"Суперсоюз: {val_4}"
+
+        print(f"[DEBUG] Final label: '{label}' (val_1='{val_1}', val_2='{val_2}', val_3='{val_3}', val_4='{val_4}')")
 
         h = hour_msk % 24
         same = [c for c, hh in col_map.items() if hh == h]
