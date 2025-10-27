@@ -3201,7 +3201,8 @@ async def cmd_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         msg += "\n📌 Использование:\n"
         msg += "/interval <минуты> - для всех\n"
-        msg += "/interval <source_id> <минуты> - для конкретного"
+        msg += "/interval <source_id> <минуты> - для конкретного\n"
+        msg += "\n⚠️ Минимальный интервал: 5 минут"
 
         await update.message.reply_text(msg)
         return
@@ -3229,9 +3230,10 @@ async def cmd_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("❌ Это не ваш источник")
                 return
 
-            if minutes < 1 or minutes > 1440:
+            if minutes < 5 or minutes > 1440:
                 await update.message.reply_text(
-                    "❌ Интервал должен быть от 1 до 1440 минут"
+                    "❌ Интервал должен быть от 5 до 1440 минут\n"
+                    "⚠️ Минимум 5 минут для стабильной работы"
                 )
                 return
 
@@ -3251,9 +3253,10 @@ async def cmd_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
 
-            if minutes < 1 or minutes > 1440:
+            if minutes < 5 or minutes > 1440:
                 await update.message.reply_text(
-                    "❌ Интервал должен быть от 1 до 1440 минут"
+                    "❌ Интервал должен быть от 5 до 1440 минут\n"
+                    "⚠️ Минимум 5 минут для стабильной работы"
                 )
                 return
 
