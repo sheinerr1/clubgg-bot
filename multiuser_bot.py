@@ -782,35 +782,46 @@ def _find_schedule_blocks(df: pd.DataFrame, hour_msk: int):
         col_3 = jmax + 3  # Столбец +3 (Клуб)
         col_4 = jmax + 4  # Столбец +4 (Суперсоюз)
 
+        print(f"[DEBUG] Row #{row}: jmax={jmax}, df.shape={df.shape}, need cols: {col_1},{col_2},{col_3},{col_4}")
+
         # Читаем значения из столбцов
         val_1 = ""
         val_2 = ""  # Союз
         val_3 = ""  # Клуб
         val_4 = ""  # Суперсоюз
 
-        if col_1 < df.shape[1]:
-            v = str(df.iloc[row, col_1]).strip()
-            print(f"[DEBUG] col_1 (#{col_1}): '{v}' | lower: '{v.lower()}' | ignored: {v.lower() in ignore_values}")
-            if v.lower() not in ignore_values:
+        # Безопасное чтение столбцов (Google Sheets API может не возвращать пустые ячейки в конце)
+        try:
+            v = str(df.iloc[row, col_1]).strip() if col_1 < df.shape[1] else ""
+            print(f"[DEBUG] col_1 (#{col_1}): '{v}' | lower: '{v.lower()}' | ignored: {v.lower() in ignore_values} | exists: {col_1 < df.shape[1]}")
+            if v and v.lower() not in ignore_values:
                 val_1 = v
+        except (IndexError, KeyError):
+            print(f"[DEBUG] col_1 (#{col_1}): NOT EXISTS")
 
-        if col_2 < df.shape[1]:
-            v = str(df.iloc[row, col_2]).strip()
-            print(f"[DEBUG] col_2 (#{col_2}): '{v}' | lower: '{v.lower()}' | ignored: {v.lower() in ignore_values}")
-            if v.lower() not in ignore_values:
+        try:
+            v = str(df.iloc[row, col_2]).strip() if col_2 < df.shape[1] else ""
+            print(f"[DEBUG] col_2 (#{col_2}): '{v}' | lower: '{v.lower()}' | ignored: {v.lower() in ignore_values} | exists: {col_2 < df.shape[1]}")
+            if v and v.lower() not in ignore_values:
                 val_2 = v
+        except (IndexError, KeyError):
+            print(f"[DEBUG] col_2 (#{col_2}): NOT EXISTS")
 
-        if col_3 < df.shape[1]:
-            v = str(df.iloc[row, col_3]).strip()
-            print(f"[DEBUG] col_3 (#{col_3}): '{v}' | lower: '{v.lower()}' | ignored: {v.lower() in ignore_values}")
-            if v.lower() not in ignore_values:
+        try:
+            v = str(df.iloc[row, col_3]).strip() if col_3 < df.shape[1] else ""
+            print(f"[DEBUG] col_3 (#{col_3}): '{v}' | lower: '{v.lower()}' | ignored: {v.lower() in ignore_values} | exists: {col_3 < df.shape[1]}")
+            if v and v.lower() not in ignore_values:
                 val_3 = v
+        except (IndexError, KeyError):
+            print(f"[DEBUG] col_3 (#{col_3}): NOT EXISTS")
 
-        if col_4 < df.shape[1]:
-            v = str(df.iloc[row, col_4]).strip()
-            print(f"[DEBUG] col_4 (#{col_4}): '{v}' | lower: '{v.lower()}' | ignored: {v.lower() in ignore_values}")
-            if v.lower() not in ignore_values:
+        try:
+            v = str(df.iloc[row, col_4]).strip() if col_4 < df.shape[1] else ""
+            print(f"[DEBUG] col_4 (#{col_4}): '{v}' | lower: '{v.lower()}' | ignored: {v.lower() in ignore_values} | exists: {col_4 < df.shape[1]}")
+            if v and v.lower() not in ignore_values:
                 val_4 = v
+        except (IndexError, KeyError):
+            print(f"[DEBUG] col_4 (#{col_4}): NOT EXISTS")
 
         # Формируем label: берем первое непустое значение слева направо
         if val_1:
