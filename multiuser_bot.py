@@ -732,7 +732,7 @@ def tz_now(tz_name: str) -> dt.datetime:
 
 # ====================== Google Sheets Parsers ======================
 
-HH_RE = re.compile(r"^\s*(\d{1,2})(?::\d{2})?\s*$", re.IGNORECASE)
+HH_RE = re.compile(r"^\s*(\d{1,2}):\d{2}\s*$", re.IGNORECASE)
 TIME_RX = re.compile(
     r"^\s*(?:Time\s+([A-Za-zА-Яа-я]+)|([A-Za-zА-Яа-я]+)\s+Time)\s*$", re.IGNORECASE
 )
