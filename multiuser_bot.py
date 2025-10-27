@@ -467,6 +467,11 @@ class Database:
             except sqlite3.OperationalError:
                 pass  # Колонка уже существует
 
+            try:
+                conn.execute("ALTER TABLE sources ADD COLUMN waitlist_config TEXT")
+            except sqlite3.OperationalError:
+                pass  # Колонка уже существует
+
     def get_user(self, user_id: int) -> Optional[dict]:
         with self.get_connection() as conn:
             row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
@@ -511,15 +516,16 @@ class Database:
             return existing_ids[-1] + 1
 
     def add_source(self, user_id: int, name: str, site: str, base_url: str,
-                   unique_id: str, sheet_url: str, mode: str, auth_state_file: str = None):
+                   unique_id: str, sheet_url: str, mode: str, auth_state_file: str = None,
+                   waitlist_config: str = None):
         with self.get_connection() as conn:
             # Get the next available ID (reusing deleted IDs)
             next_id = self.get_next_available_id()
 
             conn.execute("""
-                INSERT INTO sources (id, user_id, name, site, base_url, unique_id, sheet_url, mode, auth_state_file)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (next_id, user_id, name, site, base_url, unique_id, sheet_url, mode, auth_state_file))
+                INSERT INTO sources (id, user_id, name, site, base_url, unique_id, sheet_url, mode, auth_state_file, waitlist_config)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (next_id, user_id, name, site, base_url, unique_id, sheet_url, mode, auth_state_file, waitlist_config))
 
     def get_user_sources(self, user_id: int, enabled_only: bool = False) -> List[dict]:
         with self.get_connection() as conn:
@@ -654,6 +660,20 @@ class Database:
                 "UPDATE sources SET last_checked_at = ? WHERE id = ?",
                 (dt.datetime.now().isoformat(), source_id)
             )
+
+    def update_source_waitlist_config(self, source_id: int, waitlist_config: Optional[str]):
+        """Обновить waitlist config для источника (None = удалить)"""
+        with self.get_connection() as conn:
+            conn.execute(
+                "UPDATE sources SET waitlist_config = ? WHERE id = ?",
+                (waitlist_config, source_id)
+            )
+
+    def get_source_waitlist_config(self, source_id: int) -> Optional[str]:
+        """Получить waitlist config источника"""
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT waitlist_config FROM sources WHERE id = ?", (source_id,)).fetchone()
+            return row['waitlist_config'] if row and row['waitlist_config'] else None
 
     def get_source_last_checked(self, source_id: int) -> Optional[dt.datetime]:
         """Получить время последней проверки источника"""
@@ -2198,7 +2218,7 @@ app_instance = None
 
 # ====================== Telegram Handlers ======================
 
-WAITING_SITE, WAITING_UID, WAITING_SHEET, WAITING_NAME, WAITING_CHANGE_SOURCE, WAITING_NEW_TABLE = range(6)
+WAITING_SITE, WAITING_UID, WAITING_SHEET, WAITING_NAME, WAITING_CHANGE_SOURCE, WAITING_NEW_TABLE, WAITING_WAITLIST_SOURCE, WAITING_WAITLIST_CONFIG, WAITING_WAITLIST_FOR_NEW, WAITING_WAITLIST_NEW_INPUT = range(10)
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Welcome message"""
@@ -2295,6 +2315,45 @@ async def cmd_tutorial(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • clubgg - ClubGG Poker
 • fishpoker - FishPoker
 • ebpoker - EB Poker / Diamond
+
+<b>⚙️ НАСТРОЙКА WAITLIST CONFIG (необязательно)</b>
+
+Waitlist Config контролирует сколько ботов остается за столом
+когда в очереди (waitlist) появляются реальные игроки.
+
+<b>Формат:</b> 9 чисел через запятую (без пробелов)
+Пример: <code>1,2,3,4,4,4,5,6,7</code>
+
+<b>Каждая позиция = размер стола:</b>
+• 1-я позиция: 2-max столы (1-2 бота)
+• 2-я позиция: 3-max столы (1-3 бота)
+• 3-я позиция: 4-max столы (1-4 бота)
+• 4-я позиция: 5-max столы (1-5 ботов)
+• 5-я позиция: 6-max столы (1-6 ботов)
+• 6-я позиция: 7-max столы (1-7 ботов)
+• 7-я позиция: 8-max столы (1-8 ботов)
+• 8-я позиция: 9-max столы (1-9 ботов)
+• 9-я позиция: 10-max столы (1-10 ботов)
+
+<b>Пример для 6-max столов:</b>
+Конфиг: <code>1,2,3,4,4,4,5,6,7</code>
+Когда в очереди появляются живые игроки,
+за 6-max столом останется 4 бота (5-я позиция = 4)
+
+<b>Пример для 9-max столов:</b>
+Тот же конфиг: <code>1,2,3,4,4,4,5,6,7</code>
+За 9-max столом останется 6 ботов (8-я позиция = 6)
+
+<b>Как настроить:</b>
+• В /setup - после выбора названия (опционально)
+• В /setup - меню "⚙️ Настроить Waitlist" (изменить существующий)
+• В /add - 5-й параметр (опционально):
+  /add clubgg vader.ID https://... "Имя" 1,2,3,4,4,4,5,6,7
+
+<b>Удалить конфиг:</b>
+Введите <code>reset</code> или <code>off</code> при изменении
+
+⚠️ Если не настроено - используются стандартные настройки сайта
 
 <b>🆕 РАБОТА В ГРУППАХ:</b>
 1. Добавьте бота в группу
@@ -2659,6 +2718,164 @@ async def on_new_table_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     return ConversationHandler.END
 
+async def on_change_waitlist_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle change_waitlist button - show user's sources"""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = get_effective_user_id(update)
+    sources = db.get_user_sources(user_id)
+
+    if not sources:
+        await query.edit_message_text(
+            "\U0001f4ed У вас нет источников.\n\n"
+            "Сначала добавьте источник через /setup",
+            parse_mode='HTML'
+        )
+        return ConversationHandler.END
+
+    # Create buttons for each source
+    keyboard = []
+    for source in sources:
+        site_emoji = {
+            'clubgg': '\U0001f3b2',
+            'fishpoker': '\U0001f41f',
+            'ebpoker': '\U0001f48e'
+        }.get(source['site'], '\U0001f3b2')
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{site_emoji} {source['name']} (ID: {source['id']})",
+                callback_data=f"change_waitlist_{source['id']}"
+            )
+        ])
+
+    keyboard.append([InlineKeyboardButton("\u274c Отмена", callback_data="cancel_setup")])
+
+    text = """<b>\u2699️ НАСТРОИТЬ WAITLIST</b>
+
+Выберите источник для настройки Waitlist Config:"""
+
+    await query.edit_message_text(
+        text,
+        parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return WAITING_WAITLIST_SOURCE
+
+async def on_waitlist_source_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle source selection for waitlist config change"""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data.startswith("change_waitlist_"):
+        source_id = int(query.data.replace("change_waitlist_", ""))
+        context.user_data['change_waitlist_source_id'] = source_id
+
+        # Get source info
+        user_id = get_effective_user_id(update)
+        sources = db.get_user_sources(user_id)
+        source = next((s for s in sources if s['id'] == source_id), None)
+
+        if not source:
+            await query.edit_message_text("\u274c Источник не найден")
+            return ConversationHandler.END
+
+        # Get current waitlist config
+        current_config = db.get_source_waitlist_config(source_id)
+
+        text = f"""<b>\u2699️ НАСТРОИТЬ WAITLIST</b>
+
+Источник: <b>{source['name']}</b>
+Текущий конфиг: <code>{current_config if current_config else 'Не установлен'}</code>
+
+Введите новый конфиг или команду:
+
+<b>Формат:</b> 9 чисел через запятую (без пробелов)
+<i>Пример: 1,2,3,4,4,4,5,6,7</i>
+
+<b>Позиции:</b>
+1 = 2-max (1-2 бота)
+2 = 3-max (1-3 бота)
+3 = 4-max (1-4 бота)
+4 = 5-max (1-5 ботов)
+5 = 6-max (1-6 ботов) ⭐
+6 = 7-max (1-7 ботов)
+7 = 8-max (1-8 ботов)
+8 = 9-max (1-9 ботов) ⭐
+9 = 10-max (1-10 ботов)
+
+<b>Команды:</b>
+• <code>reset</code> - удалить конфиг
+• /cancel - отмена"""
+
+        await query.edit_message_text(text, parse_mode='HTML')
+        return WAITING_WAITLIST_CONFIG
+
+async def on_waitlist_config_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle waitlist config input"""
+    user_input = update.message.text.strip()
+    source_id = context.user_data.get('change_waitlist_source_id')
+
+    if not source_id:
+        await update.message.reply_text("\u274c Ошибка: источник не выбран")
+        return ConversationHandler.END
+
+    # Get source info
+    user_id = get_effective_user_id(update)
+    sources = db.get_user_sources(user_id)
+    source = next((s for s in sources if s['id'] == source_id), None)
+
+    if not source:
+        await update.message.reply_text("\u274c Источник не найден")
+        return ConversationHandler.END
+
+    # Handle reset command
+    if user_input.lower() in ('reset', 'off', 'delete', 'remove'):
+        db.update_source_waitlist_config(source_id, None)
+        await update.message.reply_text(
+            f"""\u2705 <b>Waitlist Config удален!</b>
+
+Источник: <b>{source['name']}</b>
+
+Теперь будут использоваться стандартные настройки сайта.""",
+            parse_mode='HTML'
+        )
+        context.user_data.pop('change_waitlist_source_id', None)
+        return ConversationHandler.END
+
+    # Validate config
+    valid, result = validate_waitlist_config(user_input)
+
+    if not valid:
+        await update.message.reply_text(
+            f"""\u274c <b>Ошибка валидации!</b>
+
+{result}
+
+Попробуйте еще раз или /cancel для отмены.""",
+            parse_mode='HTML'
+        )
+        return WAITING_WAITLIST_CONFIG  # Stay in this state
+
+    # Save valid config
+    db.update_source_waitlist_config(source_id, result)
+
+    await update.message.reply_text(
+        f"""\u2705 <b>Waitlist Config обновлен!</b>
+
+Источник: <b>{source['name']}</b>
+Новый конфиг: <code>{result}</code>
+
+Изменения вступят в силу при следующей проверке.""",
+        parse_mode='HTML'
+    )
+
+    # Clear context
+    context.user_data.pop('change_waitlist_source_id', None)
+
+    return ConversationHandler.END
+
 async def start_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Setup wizard start"""
     keyboard = [
@@ -2666,6 +2883,7 @@ async def start_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("\U0001f41f FishPoker", callback_data="site_fishpoker")],
         [InlineKeyboardButton("\U0001f48e EBPoker/Diamond", callback_data="site_ebpoker")],
         [InlineKeyboardButton("\U0001f4dd Изменить таблицу", callback_data="change_table")],
+        [InlineKeyboardButton("\u2699️ Настроить Waitlist", callback_data="change_waitlist")],
         [InlineKeyboardButton("\u274c Отмена", callback_data="cancel_setup")],
     ]
 
@@ -2717,6 +2935,72 @@ def get_effective_user_id(update: Update) -> int:
 
     # В личке используем ID отправителя
     return update.effective_user.id
+
+def validate_waitlist_config(config_str: str) -> Tuple[bool, str]:
+    """
+    Валидация конфига waitlist.
+
+    Формат: 1,2,3,4,4,4,5,6,7 (9 чисел через запятую, без пробелов)
+
+    Параметр common.eco.bot.count.if.have.waitlist контролирует
+    сколько ботов остается за столом когда появляются реальные игроки в очереди.
+
+    Индексы (размер стола → макс ботов):
+    - Индекс 0 (2-max): 1-2 бота
+    - Индекс 1 (3-max): 1-3 бота
+    - Индекс 2 (4-max): 1-4 бота
+    - Индекс 3 (5-max): 1-5 ботов
+    - Индекс 4 (6-max): 1-6 ботов
+    - Индекс 5 (7-max): 1-7 ботов
+    - Индекс 6 (8-max): 1-8 ботов
+    - Индекс 7 (9-max): 1-9 ботов
+    - Индекс 8 (10-max): 1-10 ботов
+
+    Args:
+        config_str: Строка конфига
+
+    Returns:
+        (True, cleaned_config) или (False, error_message)
+    """
+    if not config_str or not isinstance(config_str, str):
+        return False, "Конфиг не может быть пустым"
+
+    # Убираем пробелы
+    config_str = config_str.strip()
+
+    # Разбиваем по запятым
+    parts = config_str.split(',')
+
+    # Проверяем что ровно 9 чисел
+    if len(parts) != 9:
+        return False, f"Должно быть ровно 9 чисел через запятую (получено: {len(parts)})"
+
+    # Проверяем что все части это числа и в допустимом диапазоне
+    numbers = []
+    for i, part in enumerate(parts):
+        part = part.strip()
+
+        # Проверяем что это число
+        try:
+            num = int(part)
+        except ValueError:
+            return False, f"Позиция {i+1}: '{part}' не является числом"
+
+        # Размер стола для этого индекса: i=0 → 2-max, i=1 → 3-max, ..., i=8 → 10-max
+        table_size = i + 2
+
+        # Проверяем диапазон: минимум 1, максимум = размер стола
+        if num < 1:
+            return False, f"Позиция {i+1} ({table_size}-max): минимум 1 бот (получено: {num})"
+
+        if num > table_size:
+            return False, f"Позиция {i+1} ({table_size}-max): максимум {table_size} ботов (получено: {num})"
+
+        numbers.append(str(num))
+
+    # Возвращаем очищенный конфиг без пробелов
+    cleaned = ','.join(numbers)
+    return True, cleaned
 
 # ====================== Commands ======================
 
@@ -2883,9 +3167,10 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 4:
         await update.message.reply_text(
             "Использование:\n"
-            "/add <site> <uid> <sheet_url> <name>\n\n"
+            "/add <site> <uid> <sheet_url> <name> [waitlist_config]\n\n"
             "Пример:\n"
-            "/add clubgg vader.ClubGG_AID_3132 https://docs.google.com/... Мой ClubGG"
+            "/add clubgg vader.ClubGG_AID_3132 https://docs.google.com/... \"Мой ClubGG\"\n"
+            "/add clubgg vader.ClubGG_AID_3132 https://docs.google.com/... \"Мой ClubGG\" 1,2,3,4,4,4,5,6,7"
         )
         return
 
@@ -2893,7 +3178,27 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     site = context.args[0].lower()
     uid = context.args[1]
     sheet_url = context.args[2]
-    name = " ".join(context.args[3:])
+
+    # Check if there's a waitlist_config (last arg looks like config)
+    waitlist_config = None
+    if len(context.args) >= 5:
+        # Check if last arg is waitlist config (contains commas and numbers)
+        potential_config = context.args[-1]
+        if ',' in potential_config:
+            # Validate config
+            valid, result = validate_waitlist_config(potential_config)
+            if valid:
+                waitlist_config = result
+                # Name is everything from args[3] to args[-2]
+                name = " ".join(context.args[3:-1])
+            else:
+                await update.message.reply_text(f"\u274c Ошибка waitlist config:\n{result}")
+                return
+        else:
+            # No config, name includes all from args[3:]
+            name = " ".join(context.args[3:])
+    else:
+        name = " ".join(context.args[3:])
 
     if site not in ("clubgg", "fishpoker", "ebpoker"):
         await update.message.reply_text(
@@ -2915,16 +3220,19 @@ async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     auth_state_file = f"_auth_state_{site}_{user_id}.json"
 
     try:
-        db.add_source(user_id, name, site, base_url, uid, to_csv_export(sheet_url), mode, auth_state_file)
+        db.add_source(user_id, name, site, base_url, uid, to_csv_export(sheet_url), mode, auth_state_file, waitlist_config)
 
         text = f"""\u2705 <b>Источник добавлен!</b>
 
 <b>Параметры:</b>
 • Название: {name}
 • Сайт: {site}
-• UID: <code>{uid}</code>
+• UID: <code>{uid}</code>"""
 
-Используйте /check для проверки!"""
+        if waitlist_config:
+            text += f"\n• Waitlist Config: <code>{waitlist_config}</code>"
+
+        text += "\n\nИспользуйте /check для проверки!"
 
         keyboard = [
             [InlineKeyboardButton("\u2705 Проверить сейчас", callback_data="check_all")],
@@ -2976,7 +3284,10 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             status = "\u2705" if s['enabled'] else "\u274c"
             text += f"{status} <b>#{s['id']}</b> {s['name']}\n"
             text += f"   • Сайт: {s['site']}\n"
-            text += f"   • UID: <code>{s['unique_id']}</code>\n\n"
+            text += f"   • UID: <code>{s['unique_id']}</code>\n"
+            if s.get('waitlist_config'):
+                text += f"   • Waitlist: <code>{s['waitlist_config']}</code>\n"
+            text += "\n"
 
         text += "\n<b>Управление:</b>\n"
         text += "/toggle &lt;id&gt; - Вкл/выкл\n"
@@ -3162,7 +3473,7 @@ async def on_sheet_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return WAITING_NAME
 
 async def on_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Name input - finish setup"""
+    """Name input - ask about waitlist config"""
     name = update.message.text.strip()
     user_id = get_effective_user_id(update)  # В группе = MAIN_USER_ID, в личке = ID отправителя
 
@@ -3183,8 +3494,147 @@ async def on_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     auth_state_file = f"_auth_state_{site}_{user_id}.json"
 
+    # Сохраняем все данные для создания источника позже
+    context.user_data['setup_name'] = name
+    context.user_data['setup_base_url'] = base_url
+    context.user_data['setup_mode'] = mode
+    context.user_data['setup_auth_state_file'] = auth_state_file
+
+    # Спрашиваем про Waitlist Config
+    text = """<b>\U0001f680 МАСТЕР НАСТРОЙКИ</b>
+
+Название сохранено: <b>{}</b> \u2705
+
+<b>\u2699️ Дополнительная настройка (опционально):</b>
+
+Хотите настроить <b>Waitlist Config</b>?
+
+Параметр <code>common.eco.bot.count.if.have.waitlist</code> контролирует сколько ботов остается за столом когда появляются реальные игроки в очереди.
+
+<i>Если не уверены, можете пропустить этот шаг.</i>""".format(name)
+
+    keyboard = [
+        [InlineKeyboardButton("\u2699️ Настроить", callback_data="setup_waitlist_new")],
+        [InlineKeyboardButton("\u23ed️ Пропустить", callback_data="skip_waitlist_new")],
+    ]
+
+    await update.message.reply_text(text, parse_mode='HTML',
+                                   reply_markup=InlineKeyboardMarkup(keyboard))
+
+    return WAITING_WAITLIST_FOR_NEW
+
+async def on_waitlist_new_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle waitlist config choice for new source"""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = get_effective_user_id(update)
+
+    # Если пропустить - создаем источник без waitlist config
+    if query.data == "skip_waitlist_new":
+        name = context.user_data.get('setup_name')
+        site = context.user_data.get('setup_site')
+        uid = context.user_data.get('setup_uid')
+        sheet_url = context.user_data.get('setup_sheet')
+        base_url = context.user_data.get('setup_base_url')
+        mode = context.user_data.get('setup_mode')
+        auth_state_file = context.user_data.get('setup_auth_state_file')
+
+        try:
+            db.add_source(user_id, name, site, base_url, uid, to_csv_export(sheet_url), mode, auth_state_file)
+
+            text = f"""<b>\u2705 НАСТРОЙКА ЗАВЕРШЕНА!</b>
+
+Источник <b>{name}</b> успешно добавлен!
+
+<b>Параметры:</b>
+• Сайт: {site}
+• UID: <code>{uid}</code>
+• Название: {name}
+• Waitlist Config: Не установлен (стандартные настройки)
+
+<b>Что дальше?</b>
+• /check - Проверить сейчас
+• /list - Список источников
+• /settings - Настроить интервал
+
+Бот автоматически начнёт проверки!"""
+
+            keyboard = [
+                [InlineKeyboardButton("\u2705 Проверить сейчас", callback_data="check_all")],
+                [InlineKeyboardButton("\u2795 Добавить ещё", callback_data="quick_setup")],
+                [InlineKeyboardButton("\u2699️ Настройки", callback_data="user_settings")],
+            ]
+
+            await query.edit_message_text(text, parse_mode='HTML',
+                                         reply_markup=InlineKeyboardMarkup(keyboard))
+        except Exception as e:
+            await query.edit_message_text(f"\u274c Ошибка при добавлении: {e}")
+
+        return ConversationHandler.END
+
+    # Если настроить - показываем инструкцию и просим ввести
+    elif query.data == "setup_waitlist_new":
+        text = """<b>\u2699️ НАСТРОИТЬ WAITLIST CONFIG</b>
+
+Введите конфиг в формате: 9 чисел через запятую (без пробелов)
+<i>Пример: 1,2,3,4,4,4,5,6,7</i>
+
+<b>Позиции:</b>
+1 = 2-max (1-2 бота)
+2 = 3-max (1-3 бота)
+3 = 4-max (1-4 бота)
+4 = 5-max (1-5 ботов)
+5 = 6-max (1-6 ботов) ⭐
+6 = 7-max (1-7 ботов)
+7 = 8-max (1-8 ботов)
+8 = 9-max (1-9 ботов) ⭐
+9 = 10-max (1-10 ботов)
+
+Отмена: /cancel"""
+
+        await query.edit_message_text(text, parse_mode='HTML')
+        return WAITING_WAITLIST_NEW_INPUT
+
+async def on_waitlist_new_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle waitlist config input for new source"""
+    user_input = update.message.text.strip()
+    user_id = get_effective_user_id(update)
+
+    # Validate config
+    valid, result = validate_waitlist_config(user_input)
+
+    if not valid:
+        await update.message.reply_text(
+            f"""\u274c <b>Ошибка валидации!</b>
+
+{result}
+
+Попробуйте еще раз или /cancel для отмены.""",
+            parse_mode='HTML'
+        )
+        return WAITING_WAITLIST_NEW_INPUT  # Stay in this state
+
+    # Get saved data and create source with waitlist config
+    name = context.user_data.get('setup_name')
+    site = context.user_data.get('setup_site')
+    uid = context.user_data.get('setup_uid')
+    sheet_url = context.user_data.get('setup_sheet')
+    base_url = context.user_data.get('setup_base_url')
+    mode = context.user_data.get('setup_mode')
+    auth_state_file = context.user_data.get('setup_auth_state_file')
+
     try:
+        # Create source
         db.add_source(user_id, name, site, base_url, uid, to_csv_export(sheet_url), mode, auth_state_file)
+
+        # Get the newly created source ID (it's the last one added by this user)
+        sources = db.get_user_sources(user_id)
+        new_source = next((s for s in sources if s['name'] == name and s['site'] == site), None)
+
+        if new_source:
+            # Update waitlist config
+            db.update_source_waitlist_config(new_source['id'], result)
 
         text = f"""<b>\u2705 НАСТРОЙКА ЗАВЕРШЕНА!</b>
 
@@ -3194,6 +3644,7 @@ async def on_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Сайт: {site}
 • UID: <code>{uid}</code>
 • Название: {name}
+• Waitlist Config: <code>{result}</code>
 
 <b>Что дальше?</b>
 • /check - Проверить сейчас
@@ -3834,12 +4285,20 @@ def build_app():
             WAITING_SITE: [
                 CallbackQueryHandler(on_site_button, pattern="^site_"),
                 CallbackQueryHandler(on_change_table_button, pattern="^change_table$"),
+                CallbackQueryHandler(on_change_waitlist_button, pattern="^change_waitlist$"),
             ],
             WAITING_UID: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_uid_input)],
             WAITING_SHEET: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_sheet_input)],
             WAITING_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_name_input)],
             WAITING_CHANGE_SOURCE: [CallbackQueryHandler(on_source_select_for_table_change, pattern="^change_source_")],
             WAITING_NEW_TABLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_new_table_input)],
+            WAITING_WAITLIST_SOURCE: [CallbackQueryHandler(on_waitlist_source_select, pattern="^change_waitlist_")],
+            WAITING_WAITLIST_CONFIG: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_waitlist_config_input)],
+            WAITING_WAITLIST_FOR_NEW: [
+                CallbackQueryHandler(on_waitlist_new_button, pattern="^setup_waitlist_new$"),
+                CallbackQueryHandler(on_waitlist_new_button, pattern="^skip_waitlist_new$"),
+            ],
+            WAITING_WAITLIST_NEW_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_waitlist_new_input)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel_setup),
