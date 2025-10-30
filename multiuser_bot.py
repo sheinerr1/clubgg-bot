@@ -647,12 +647,20 @@ class Database:
             row = conn.execute("SELECT interval_minutes FROM sources WHERE id = ?", (source_id,)).fetchone()
             return row['interval_minutes'] if row else 15
 
-    def set_source_last_checked(self, source_id: int):
-        """Обновить время последней проверки источника"""
+    def set_source_last_checked(self, source_id: int, check_time: Optional[dt.datetime] = None):
+        """Обновить время последней проверки источника
+
+        Args:
+            source_id: ID источника
+            check_time: Время проверки (если None, используется текущее время)
+        """
+        if check_time is None:
+            check_time = dt.datetime.now()
+
         with self.get_connection() as conn:
             conn.execute(
                 "UPDATE sources SET last_checked_at = ? WHERE id = ?",
-                (dt.datetime.now().isoformat(), source_id)
+                (check_time.isoformat(), source_id)
             )
 
     def get_source_last_checked(self, source_id: int) -> Optional[dt.datetime]:
@@ -897,14 +905,9 @@ def schedule_clubgg_blocks(csv_url: str, hour_msk: int):
             # Парсим название стола на компоненты
             table_name, game_type, limit = parse_table_name(label)
 
-            # Получаем количество ботов из расписания
+            # Получаем количество ботов из расписания (может быть список)
             val = df.iloc[i, b["col_hour"]]
-            bots = 0
-            try:
-                if pd.notna(val):
-                    bots = int(float(str(val).replace(",", ".")))
-            except:
-                bots = 0
+            plan_list = parse_plan_value(val)
 
             # Ключ для сопоставления - нормализованное полное название
             key = norm(label)
@@ -914,7 +917,7 @@ def schedule_clubgg_blocks(csv_url: str, hour_msk: int):
                 "name": table_name,    # Название без типа и лимита
                 "game": game_type,     # Тип игры (NLH, PLO и т.д.)
                 "limit": limit,        # Лимит
-                "plan": max(0, bots),  # Количество ботов по плану
+                "plan": plan_list,     # Список допустимых значений ботов
                 "key": key,            # Нормализованный ключ для поиска
             })
         blocks.append((rows, b["hour_print"], b["label"]))
@@ -997,6 +1000,110 @@ def parse_table_name(label: str) -> Tuple[str, str, int]:
 
     return name, gtype, limit
 
+
+def parse_plan_value(val) -> List[int]:
+    """
+    Парсит значение плана из ячейки Google Sheets.
+
+    Поддерживает:
+    - Одно число: "6" -> [6]
+    - Несколько чисел через пробел: "8 7 6" -> [8, 7, 6]
+    - Пустые значения: "" -> []
+
+    Args:
+        val: значение из pandas DataFrame (может быть str, int, float, NaN)
+
+    Returns:
+        Список целых чисел (допустимых значений ботов), отсортированный по возрастанию
+    """
+    if pd.isna(val):
+        return []
+
+    # Конвертируем в строку и заменяем запятые на точки
+    val_str = str(val).replace(",", ".").strip()
+    if not val_str:
+        return []
+
+    # Находим все числа в строке
+    numbers = re.findall(r"\d+", val_str)
+    if not numbers:
+        return []
+
+    # Конвертируем в целые числа, убираем дубликаты и сортируем
+    result = sorted(list(set(int(n) for n in numbers)))
+    return result
+
+
+def is_plan_ok(bots: int, plan_list: List[int]) -> bool:
+    """
+    Проверяет входит ли количество ботов в допустимый диапазон.
+
+    Args:
+        bots: фактическое количество ботов
+        plan_list: список допустимых значений
+
+    Returns:
+        True если количество ботов допустимо, False иначе
+    """
+    if not plan_list:
+        return True  # Нет плана = всегда норма
+    return bots in plan_list
+
+
+def get_plan_deficit(bots: int, plan_list: List[int]) -> int:
+    """
+    Возвращает недостачу ботов (относительно минимума диапазона).
+
+    Args:
+        bots: фактическое количество ботов
+        plan_list: список допустимых значений
+
+    Returns:
+        Положительное число если недостача, 0 если норма или избыток
+    """
+    if not plan_list:
+        return 0
+    min_plan = min(plan_list)
+    if bots < min_plan:
+        return min_plan - bots
+    return 0
+
+
+def get_plan_excess(bots: int, plan_list: List[int]) -> int:
+    """
+    Возвращает избыток ботов (относительно максимума диапазона).
+
+    Args:
+        bots: фактическое количество ботов
+        plan_list: список допустимых значений
+
+    Returns:
+        Положительное число если избыток, 0 если норма или недостача
+    """
+    if not plan_list:
+        return 0
+    max_plan = max(plan_list)
+    if bots > max_plan:
+        return bots - max_plan
+    return 0
+
+
+def format_plan(plan_list: List[int]) -> str:
+    """
+    Форматирует план для отображения в отчете.
+
+    Args:
+        plan_list: список допустимых значений
+
+    Returns:
+        Строка вида "8 7 6" или "6" для одного значения
+    """
+    if not plan_list:
+        return "0"
+    # Сортируем в обратном порядке для красивого отображения (сначала большие)
+    return " ".join(map(str, sorted(plan_list, reverse=True)))
+
+
 def schedule_diamond_blocks(csv_url: str, hour_msk: int):
     """
     Парсит расписание для Diamond/FishPoker/EBPoker с поддержкой названий столов.
@@ -1032,14 +1139,9 @@ def schedule_diamond_blocks(csv_url: str, hour_msk: int):
             except:
                 size = 6
 
-            # Читаем план из столбца с текущим часом
-            plan = None
-            try:
-                val = df.iloc[i, b["col_hour"]]
-                if pd.notna(val) and str(val).strip() != "":
-                    plan = int(float(str(val).replace(",", ".")))
-            except:
-                plan = None
+            # Читаем план из столбца с текущим часом (может быть список)
+            val = df.iloc[i, b["col_hour"]]
+            plan_list = parse_plan_value(val)
 
             rows.append(
                 {
@@ -1047,7 +1149,7 @@ def schedule_diamond_blocks(csv_url: str, hour_msk: int):
                     "game": gtype,         # Тип игры
                     "limit": int(limit),   # Лимит
                     "size": int(size),     # Размер стола
-                    "plan": plan,          # План ботов
+                    "plan": plan_list,     # Список допустимых значений ботов
                     "raw": label,          # Оригинальная строка
                 }
             )
@@ -1635,9 +1737,10 @@ def build_report_clubgg(
                     inactive_tables_by_type_limit[key].append(r)
 
         for row in rows:
-            p = row["plan"]
+            plan_list = row["plan"]
             disp = titleize_simple(row["raw"])
-            total_plan += max(0, p)
+            # Для подсчета общего плана используем максимальное значение
+            total_plan += max(plan_list) if plan_list else 0
 
             # Сначала ищем по полному названию
             r = active_tables_by_name.get(row["key"]) or inactive_tables_by_name.get(row["key"])
@@ -1650,11 +1753,12 @@ def build_report_clubgg(
                     # Берем первый подходящий стол
                     r = candidates[0]
             if r is None:
-                if p > 0:
+                if plan_list:  # Если есть план
                     prefix = "\u274c " if use_icons else ""
-                    table_lines.append(f"{prefix}{disp} — нет стола (план: {p})")
+                    table_lines.append(f"{prefix}{disp} — нет стола (план: {format_plan(plan_list)})")
                     stat_prefix = "\u274c " if use_icons else ""
-                    issues.append(f"{stat_prefix}{disp}: -{p}")
+                    # Недостача = минимальное значение плана
+                    issues.append(f"{stat_prefix}{disp}: -{min(plan_list)}")
                 continue
 
             bots = int(r.get("bots") or 0)
@@ -1672,51 +1776,61 @@ def build_report_clubgg(
                 disp = titleize_simple(site_table_name)
             # Если стола нет на сайте, используем то что в таблице (уже в disp)
 
-            if not is_active:
-                missing = max(0, p - bots)
+            # Специальная обработка: если план = [0] и есть боты - это всегда ошибка
+            if plan_list == [0] and bots > 0:
+                prefix = "\U0001f53c " if use_icons else ""
+                table_lines.append(
+                    f"{prefix}{disp}: {total}/{cap} ({bots}) план: {format_plan(plan_list)}{live_str}"
+                )
+                stat_prefix = "\U0001f53c " if use_icons else ""
+                issues.append(
+                    f"{stat_prefix}{disp}: +{bots} {plural_ru(bots, ('лишний бот', 'лишних бота', 'лишних ботов'))}{format_live_stat(live, use_icons)}"
+                )
+            elif not is_active:
+                missing = get_plan_deficit(bots, plan_list)
                 prefix = "\u26a0️ " if use_icons else ""
                 table_lines.append(
-                    f"{prefix}{disp}: {total}/{cap} ({bots}) план: {p} (неактивный){live_str}"
+                    f"{prefix}{disp}: {total}/{cap} ({bots}) план: {format_plan(plan_list)} (неактивный){live_str}"
                 )
                 stat_prefix = "\u26a0️ " if use_icons else ""
                 issues.append(
                     f"{stat_prefix}{disp}: -{missing} (неактивный){format_live_stat(live, use_icons)}"
                 )
-            elif bots == p and live == 0:
+            elif is_plan_ok(bots, plan_list) and live == 0:
                 prefix = "\u2705 " if use_icons else ""
-                table_lines.append(f"{prefix}{disp}: {total}/{cap} ({bots}) план: {p}")
-            elif bots == p and live > 0:
+                table_lines.append(f"{prefix}{disp}: {total}/{cap} ({bots}) план: {format_plan(plan_list)}")
+            elif is_plan_ok(bots, plan_list) and live > 0:
                 # Ботов в норме, но есть живые игроки
                 prefix = "\u2705 " if use_icons else ""
                 table_lines.append(
-                    f"{prefix}{disp}: {total}/{cap} ({bots}) план: {p}{live_str}"
+                    f"{prefix}{disp}: {total}/{cap} ({bots}) план: {format_plan(plan_list)}{live_str}"
                 )
-            elif bots < p:
-                # Если стол полный, есть живые игроки и ботов = план - живые - это норма
+            elif bots < min(plan_list) if plan_list else False:
+                # Если стол полный, есть живые игроки и дефицит ботов <= количество живых - это норма
                 # (боты вышли, чтобы освободить места живым игрокам)
-                if total == cap and live > 0 and bots == p - live:
+                if total == cap and live > 0 and get_plan_deficit(bots, plan_list) <= live:
                     prefix = "\u2705 " if use_icons else ""
                     table_lines.append(
-                        f"{prefix}{disp}: {total}/{cap} ({bots}) план: {p}{live_str}"
+                        f"{prefix}{disp}: {total}/{cap} ({bots}) план: {format_plan(plan_list)}{live_str}"
                     )
                 else:
                     # Остальные случаи - реальная ошибка
                     prefix = "\u26a0️ " if use_icons else ""
                     table_lines.append(
-                        f"{prefix}{disp}: {total}/{cap} ({bots}) план: {p}{live_str}"
+                        f"{prefix}{disp}: {total}/{cap} ({bots}) план: {format_plan(plan_list)}{live_str}"
                     )
-                    diff = p - bots
+                    diff = get_plan_deficit(bots, plan_list)
                     stat_prefix = "\u26a0️ " if use_icons else ""
                     issues.append(
                         f"{stat_prefix}{disp}: -{diff}{format_live_stat(live, use_icons)}"
                     )
-            else:
-                # bots > p - лишние боты
+            elif bots > max(plan_list) if plan_list else False:
+                # Лишние боты
                 prefix = "\U0001f53c " if use_icons else ""
                 table_lines.append(
-                    f"{prefix}{disp}: {total}/{cap} ({bots}) план: {p}{live_str}"
+                    f"{prefix}{disp}: {total}/{cap} ({bots}) план: {format_plan(plan_list)}{live_str}"
                 )
-                diff = bots - p
+                diff = get_plan_excess(bots, plan_list)
                 stat_prefix = "\U0001f53c " if use_icons else ""
                 issues.append(
                     f"{stat_prefix}{disp}: +{diff} {plural_ru(diff, ('лишний бот', 'лишних бота', 'лишних ботов'))}{format_live_stat(live, use_icons)}"
@@ -1808,15 +1922,15 @@ def build_report_diamond(
 
         table_counts = defaultdict(int)
         for r in rows:
-            if r["plan"] is not None and r["plan"] > 0:
+            if r["plan"]:  # Если есть план (непустой список)
                 key = (r["game"], r["limit"], r["size"])
                 table_counts[key] += 1
 
         for r in rows:
-            p = r["plan"]
-            if p is None or p == 0:
+            plan_list = r["plan"]
+            if not plan_list:  # Если нет плана (пустой список)
                 continue
-            total_plan += max(0, p)
+            total_plan += max(plan_list)  # Используем максимальное значение
             key = (r["game"], r["limit"], r["size"])
 
             # Сначала пытаемся найти по названию (если оно указано в расписании)
@@ -1842,7 +1956,10 @@ def build_report_diamond(
 
             # Если не нашли по названию, ищем по типу+лимиту+размеру
             if chosen is None:
-                chosen = pop_best(active_by[key], p)
+                # pop_best ищет стол с количеством ботов близким к целевому
+                # Используем среднее значение диапазона как целевое
+                target = sum(plan_list) // len(plan_list)
+                chosen = pop_best(active_by[key], target)
             if chosen:
                 all_used_tables.add(id(chosen))
                 bots = int(chosen.get("bots") or 0)
@@ -1876,55 +1993,66 @@ def build_report_diamond(
                         display_name = f"{r['game']} {r['limit']}"
                         stats_name = f"{r['game']} {r['limit']} {r['size']}max"
 
-                if bots == p and live == 0:
+                # Специальная обработка: если план = [0] и есть боты - это всегда ошибка
+                if plan_list == [0] and bots > 0:
+                    prefix = "\U0001f53c " if use_icons else ""
+                    table_lines.append(
+                        f"{prefix}{display_name}: {total}/{cap} ({bots}) план: {format_plan(plan_list)}{live_str}"
+                    )
+                    diff = bots  # Все боты лишние
+                    stat_prefix = "\U0001f53c " if use_icons else ""
+                    issues.append(
+                        f"{stat_prefix}{stats_name}: +{diff} {plural_ru(diff, ('лишний бот', 'лишних бота', 'лишних ботов'))}{format_live_stat(live, use_icons)}"
+                    )
+                elif is_plan_ok(bots, plan_list) and live == 0:
                     prefix = "\u2705 " if use_icons else ""
                     table_lines.append(
-                        f"{prefix}{display_name}: {total}/{cap} ({bots}) план: {p}"
+                        f"{prefix}{display_name}: {total}/{cap} ({bots}) план: {format_plan(plan_list)}"
                     )
-                elif bots == p and live > 0:
+                elif is_plan_ok(bots, plan_list) and live > 0:
                     # Ботов в норме, но есть живые игроки
                     prefix = "\u2705 " if use_icons else ""
                     table_lines.append(
-                        f"{prefix}{display_name}: {total}/{cap} ({bots}) план: {p}{live_str}"
+                        f"{prefix}{display_name}: {total}/{cap} ({bots}) план: {format_plan(plan_list)}{live_str}"
                     )
-                elif bots < p:
-                    # Если стол полный, есть живые игроки и ботов = план - живые - это норма
+                elif bots < min(plan_list) if plan_list else False:
+                    # Если стол полный, есть живые игроки и дефицит ботов <= количество живых - это норма
                     # (боты вышли, чтобы освободить места живым игрокам)
-                    if total == cap and live > 0 and bots == p - live:
+                    if total == cap and live > 0 and get_plan_deficit(bots, plan_list) <= live:
                         prefix = "\u2705 " if use_icons else ""
                         table_lines.append(
-                            f"{prefix}{display_name}: {total}/{cap} ({bots}) план: {p}{live_str}"
+                            f"{prefix}{display_name}: {total}/{cap} ({bots}) план: {format_plan(plan_list)}{live_str}"
                         )
                     else:
                         # Остальные случаи - реальная ошибка
                         prefix = "\u26a0️ " if use_icons else ""
                         table_lines.append(
-                            f"{prefix}{display_name}: {total}/{cap} ({bots}) план: {p}{live_str}"
+                            f"{prefix}{display_name}: {total}/{cap} ({bots}) план: {format_plan(plan_list)}{live_str}"
                         )
-                        diff = p - bots
+                        diff = get_plan_deficit(bots, plan_list)
                         stat_prefix = "\u26a0️ " if use_icons else ""
                         issues.append(
                             f"{stat_prefix}{stats_name}: -{diff}{format_live_stat(live, use_icons)}"
                         )
                 else:
-                    # bots > p - лишние боты
+                    # bots > max(plan_list) - лишние боты
                     prefix = "\U0001f53c " if use_icons else ""
                     table_lines.append(
-                        f"{prefix}{display_name}: {total}/{cap} ({bots}) план: {p}{live_str}"
+                        f"{prefix}{display_name}: {total}/{cap} ({bots}) план: {format_plan(plan_list)}{live_str}"
                     )
-                    diff = bots - p
+                    diff = get_plan_excess(bots, plan_list)
                     stat_prefix = "\U0001f53c " if use_icons else ""
                     issues.append(
                         f"{stat_prefix}{stats_name}: +{diff} {plural_ru(diff, ('лишний бот', 'лишних бота', 'лишних ботов'))}{format_live_stat(live, use_icons)}"
                     )
                 continue
 
-            chosen = pop_best(inactive_by[key], p)
+            chosen = pop_best(inactive_by[key], target)
             if chosen:
                 all_used_tables.add(id(chosen))
                 bots = int(chosen.get("bots") or 0)
                 cap = int(chosen.get("cap") or r["size"])
-                total_missing = max(0, p - bots)
+                total_missing = get_plan_deficit(bots, plan_list)
 
                 # Формируем имя для неактивных столов
                 if site == "ebpoker":
@@ -1950,7 +2078,7 @@ def build_report_diamond(
 
                 prefix = "\u26a0️ " if use_icons else ""
                 table_lines.append(
-                    f"{prefix}{display_name}: {chosen['total']}/{cap} ({bots}) план: {p} (неактивный)"
+                    f"{prefix}{display_name}: {chosen['total']}/{cap} ({bots}) план: {format_plan(plan_list)} (неактивный)"
                 )
                 stat_prefix = "\u26a0️ " if use_icons else ""
                 issues.append(
@@ -1970,14 +2098,14 @@ def build_report_diamond(
             prefix = "\u274c " if use_icons else ""
             if count > 1:
                 table_lines.append(
-                    f"{prefix}{stats_name} — нет {count} {plural_ru(count, ('стола', 'столов', 'столов'))} (план: {p})"
+                    f"{prefix}{stats_name} — нет {count} {plural_ru(count, ('стола', 'столов', 'столов'))} (план: {format_plan(plan_list)})"
                 )
             else:
                 table_lines.append(
-                    f"{prefix}{display_name} — нет стола (план: {p})"
+                    f"{prefix}{display_name} — нет стола (план: {format_plan(plan_list)})"
                 )
             stat_prefix = "\u274c " if use_icons else ""
-            issues.append(f"{stat_prefix}{stats_name}: -{p}")
+            issues.append(f"{stat_prefix}{stats_name}: -{min(plan_list) if plan_list else 0}")
 
         lines.extend(table_lines)
         if issues:
@@ -2034,6 +2162,14 @@ class MultiUserRunner:
         self.tz_out = os.getenv("TZ", "Europe/Moscow")
         # Клиенты для каждого пользователя: {user_id: {site: SiteClient}}
         self.user_clients: Dict[int, Dict[str, SiteClient]] = {}
+        # Блокировки для предотвращения одновременной проверки одного источника
+        self.source_locks: Dict[int, asyncio.Lock] = {}
+
+    def _get_source_lock(self, source_id: int) -> asyncio.Lock:
+        """Получить блокировку для источника (создает если нет)"""
+        if source_id not in self.source_locks:
+            self.source_locks[source_id] = asyncio.Lock()
+        return self.source_locks[source_id]
 
     def _get_or_create_client(
         self, user_id: int, site: str, login: str, password: str, auth_state_file: Optional[str] = None
@@ -2747,13 +2883,6 @@ async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Активируем автоматический парсинг для пользователя (делаем это СРАЗУ)
     db.set_parsing_active(user_id, True)
 
-    # Создаём job если его еще нет (первый запуск)
-    if context.application and context.application.job_queue:
-        job_name = f"auto_check_{user_id}"
-        existing_jobs = context.application.job_queue.get_jobs_by_name(job_name)
-        if not existing_jobs:
-            schedule_user_job(context.application, user_id)
-
     # Проверка конкретного источника по ID, названию или сайту
     if context.args:
         query = " ".join(context.args).lower()
@@ -2823,6 +2952,9 @@ async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Для группы проверяем все источники этой группы
     # Для лички проверяем все источники пользователя
+    from datetime import datetime
+    check_time = datetime.now()  # Фиксируем время проверки
+
     if is_group:
         # В группе нужно проверить все источники разных пользователей
         for source in sources:
@@ -2832,6 +2964,8 @@ async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chunks = list(chunk_text(report))
                 for chunk in chunks:
                     await update.message.reply_text(chunk)
+                # Записываем время последней проверки
+                db.set_source_last_checked(source['id'], check_time)
             except Exception as e:
                 await update.message.reply_text(
                     f"\u274c Ошибка при проверке {source['name']}: {e}"
@@ -2842,6 +2976,16 @@ async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for source_name, report_text, site_type, source_id in reports:
             for chunk in chunk_text(report_text):
                 await update.message.reply_text(chunk)
+            # Записываем время последней проверки
+            db.set_source_last_checked(source_id, check_time)
+
+    # ПОСЛЕ проверки создаём job если его еще нет
+    # Это предотвращает дублирование: первая проверка уже выполнена выше
+    if context.application and context.application.job_queue:
+        job_name = f"auto_check_{user_id}"
+        existing_jobs = context.application.job_queue.get_jobs_by_name(job_name)
+        if not existing_jobs:
+            schedule_user_job(context.application, user_id)
 
 async def cmd_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Refresh browsers"""
@@ -3638,6 +3782,10 @@ async def auto_check_user(context: ContextTypes.DEFAULT_TYPE):
     user_id = context.job.data  # ID пользователя передается через job.data
 
     try:
+        # Фиксируем ОДНО время для всего цикла проверок
+        # Это предотвращает дрейф между источниками
+        check_time = datetime.now()
+
         # Проверяем активен ли парсинг для данного пользователя
         if not db.is_parsing_active(user_id):
             print(f"[SKIP] Parsing inactive for user {user_id}")
@@ -3684,15 +3832,26 @@ async def auto_check_user(context: ContextTypes.DEFAULT_TYPE):
                 should_check = True
             else:
                 # Проверяем прошло ли достаточно времени
-                time_since_check = datetime.now() - last_checked
+                # Используем зафиксированное check_time для всех источников
+                time_since_check = check_time - last_checked
                 if time_since_check >= timedelta(minutes=interval_minutes):
                     should_check = True
 
             if not should_check:
                 continue
 
-            # Фиксируем время начала проверки СРАЗУ, чтобы избежать смещения интервала
-            db.set_source_last_checked(source_id)
+            # Получаем блокировку для этого источника
+            lock = runner._get_source_lock(source_id)
+
+            # Проверяем не заблокирован ли уже этот источник
+            if lock.locked():
+                print(f"   [SKIP] {source['name']} already being checked")
+                continue
+
+            # Фиксируем ОДНО И ТО ЖЕ время для всех источников в этом запуске
+            # Это гарантирует точные интервалы БЕЗ дрейфа между источниками:
+            # Все источники: 10:30 -> 11:00 -> 11:30 (независимо от порядка проверки)
+            db.set_source_last_checked(source_id, check_time)
 
             # Определяем куда отправлять этот источник
             if source.get('group_id'):
@@ -3705,21 +3864,23 @@ async def auto_check_user(context: ContextTypes.DEFAULT_TYPE):
                 print(f"   [SEND] {source['name']} -> private chat")
 
             try:
-                # Проверяем источник (используем РЕАЛЬНОГО владельца источника!)
-                owner_id = source.get('user_id', user_id)
-                report = await runner.snapshot_source(owner_id, source)
+                # Используем блокировку для предотвращения дублирования
+                async with lock:
+                    # Проверяем источник (используем РЕАЛЬНОГО владельца источника!)
+                    owner_id = source.get('user_id', user_id)
+                    report = await runner.snapshot_source(owner_id, source)
 
-                # Отправляем отчёт
-                for chunk in chunk_text(report):
-                    try:
-                        await context.bot.send_message(
-                            chat_id=target_chat_id,
-                            text=chunk
-                        )
-                    except Exception as e:
-                        print(f"Ошибка отправки для источника {source['name']}: {e}")
+                    # Отправляем отчёт
+                    for chunk in chunk_text(report):
+                        try:
+                            await context.bot.send_message(
+                                chat_id=target_chat_id,
+                                text=chunk
+                            )
+                        except Exception as e:
+                            print(f"Ошибка отправки для источника {source['name']}: {e}")
 
-                print(f"   [OK] {source['name']} checked and sent")
+                    print(f"   [OK] {source['name']} checked and sent")
 
             except Exception as e:
                 print(f"   [ERROR] Failed to check {source['name']}: {e}")
@@ -3747,10 +3908,11 @@ def schedule_user_job(application, user_id: int):
 
     # Создаем новую задачу которая запускается каждую минуту
     # auto_check_user сам проверит какие источники пора проверять
+    # misfire_grace_time=None означает что job всегда выполнится, даже если пропустил время
     application.job_queue.run_repeating(
         auto_check_user,
         interval=dt.timedelta(minutes=1),  # Проверяем каждую минуту
-        first=dt.timedelta(minutes=1),
+        first=dt.timedelta(seconds=5),  # Первая проверка через 5 секунд
         data=user_id,
         name=job_name
     )
@@ -3770,34 +3932,8 @@ def cancel_user_job(application, user_id: int):
     print(f"[OK] Auto-check cancelled for user {user_id}")
 
 
-async def send_startup_notification(application):
-    """Send startup notification to all users"""
-    users = db.get_all_users()
-
-    if not users:
-        print("Нет зарегистрированных пользователей для уведомления")
-        return
-
-    startup_message = (
-        "🤖 Бот запущен и готов к работе!\n\n"
-        "📋 Для начала работы запустите свою первую проверку командой /check\n\n"
-        "💡 После запуска парсинг будет работать до остановки бота или команды /stop_parsing\n\n"
-        "Используйте /help для просмотра всех команд"
-    )
-
-    for user_id in users:
-        try:
-            await application.bot.send_message(
-                chat_id=user_id,
-                text=startup_message
-            )
-            print(f"[OK] Notification sent to user {user_id}")
-        except Exception as e:
-            print(f"[ERROR] Failed to send notification to user {user_id}: {e}")
-
-
-async def send_shutdown_notification(application):
-    """Send shutdown notification to all users and cleanup resources"""
+async def cleanup_resources(application):
+    """Cleanup resources on shutdown"""
     # Закрываем все браузеры корректно перед shutdown
     try:
         print("Closing all browsers...")
@@ -3806,9 +3942,7 @@ async def send_shutdown_notification(application):
     except Exception as e:
         print(f"[WARNING] Error closing browsers: {e}")
 
-    # Отключаем отправку уведомлений при shutdown, т.к. это вызывает ошибки HTTPXRequest
-    # когда бот уже завершает работу и соединение закрывается
-    print("Бот остановлен. Уведомления пользователям не отправляются при shutdown.")
+    print("Bot stopped.")
 
 
 # ====================== Main ======================
@@ -3892,11 +4026,8 @@ def build_app():
     else:
         print("[OK] JobQueue ready. Individual tasks are created with /check")
 
-    # Post-init callback для отправки уведомления о запуске
-    app.post_init = send_startup_notification
-
-    # Post-shutdown callback для отправки уведомления об остановке
-    app.post_shutdown = send_shutdown_notification
+    # Post-shutdown callback для очистки ресурсов
+    app.post_shutdown = cleanup_resources
 
     return app
 
